@@ -6,6 +6,7 @@ import java.util.List;
 
 import com.badlogic.gdx.ApplicationListener;
 import com.badlogic.gdx.Gdx;
+import com.badlogic.gdx.InputProcessor;
 import com.badlogic.gdx.backends.lwjgl.LwjglApplication;
 import com.badlogic.gdx.graphics.Color;
 import com.badlogic.gdx.graphics.GL10;
@@ -16,7 +17,13 @@ import com.badlogic.gdx.graphics.VertexAttribute;
 import com.badlogic.gdx.graphics.VertexAttributes.Usage;
 import com.badlogic.gdx.math.Vector2;
 
-public class ALaserTest implements ApplicationListener {
+/**
+ * 
+ * @author Archie Liu
+ * @mail longkas@gmail.com
+ *
+ */
+public class ALaserTest implements ApplicationListener, InputProcessor {
 	Mesh mesh;
 	Texture texture;
 
@@ -28,13 +35,13 @@ public class ALaserTest implements ApplicationListener {
 	short pieces = 100;
 	float time;
 	short minPiece = 20;
-	float arcStep = 0.002f;
+	float arcStep = 0.5f; //arc steps determined by y-axis distance
 	double arc;
 	float radius = 0.5f;
 	
-	float laserV = 0.6f; //move speed
+	float laserV = 0.8f; //move speed
 	float newLaserSpeed = 0.05f; // gen new speed
-	float laserNumPerGen = 50; // laser num each gen
+	float laserNumPerUnit = 50; // laser num per unit
 	float lastGenTime;
 	private float cf;
 	short maxLaserNum = 500;
@@ -73,6 +80,7 @@ public class ALaserTest implements ApplicationListener {
 	}
 	
 	public void create() {
+		Gdx.input.setInputProcessor(this);
 		cf = Color.toFloatBits(255, 255, 255, 0);
 		lasers = new ArrayList<Laser>();
 		mesh = new Mesh(true, 4 * (maxLaserNum), 6 * (maxLaserNum), new VertexAttribute(Usage.Position, 3, "a_position"), new VertexAttribute(Usage.ColorPacked, 4,
@@ -135,27 +143,34 @@ public class ALaserTest implements ApplicationListener {
 //			System.out.println( (1f -  1f * (i  * 1.0f / pieces)) + " e  "+(1f -  1f * ( (i + 1)  * 1.0f / pieces)));
 		}
 
-		public void genUV(int idx, int size)
-		{
-			//left low put
-			leftLowUV = new Vector2(0f,1f -  1f * ( (idx + 1)  * 1.0f / size));
-//			System.out.println( leftLowPos.x + " "+leftLowPos.y);
-			//right low put
-			rightLowUV = new Vector2(1f,1f -  1f * ( (idx + 1)  * 1.0f / size));
-			//right high put
-			rightHighUV = new Vector2(1f,1f -  1f * ( idx   * 1.0f / size));
-			//left high put
-			leftHighUV = new Vector2(0f,1f -  1f * (idx  * 1.0f / size));
-//			System.out.println( (1f -  1f * (i  * 1.0f / pieces)) + " e  "+(1f -  1f * ( (i + 1)  * 1.0f / pieces)));
+		
+		public void genUV(Vector2 total, Vector2 lastUVLeft, Vector2 LastUVRight) { // left (0,1) to(0,0), right(1,1) to (1,0)
+			this.leftHighUV = lastUVLeft;
+			this.rightHighUV = LastUVRight;
+			this.leftLowUV = new Vector2(0 , lastUVLeft.y - (leftHighPos.dst(this.leftLowPos) / total.x));
+			this.rightLowUV = new Vector2(1, LastUVRight.y - (this.rightHighPos.dst(this.rightLowPos)) / total.y);
+			lastUVLeft = leftLowUV;
+			LastUVRight = rightLowUV;
 		}
+		
+		public void addLen(Vector2 totalLen) {
+			totalLen.add(this.leftHighPos.dst(this.leftLowPos), this.rightHighPos.dst(this.rightLowPos));
+		}
+		
 	}
 	
 	
 	private void genMeshData() {
 		vertices = new ArrayList<Float>();
 		int idx = 0;
+		Vector2 total = new Vector2(0,0); // one laser has 
+		for (Laser l : lasers) { //gen total len to calculate UV
+			l.addLen(total);
+		}
+		Vector2 lastUVLeft = new Vector2(0, 0);
+		Vector2 LastUVRight= new Vector2(1, 0);
 		for (Laser l : lasers) {
-			l.genUV(idx, lasers.size());
+			l.genUV(total,lastUVLeft, LastUVRight);
 			l.addToVertice(vertices);
 			idx++;
 		}
@@ -190,7 +205,16 @@ public class ALaserTest implements ApplicationListener {
 	}
 	
 	public void newLaser(float delta) {
-		for (int genCount = 0; genCount < this.laserNumPerGen; genCount++) {
+		this.checkLastGenLaser();
+		//calculate gen num
+		Vector2 middle = new Vector2((this.lastGenLaser.leftLowPos.x + lastGenLaser.rightLowPos.x) /2,
+				(this.lastGenLaser.leftLowPos.y + lastGenLaser.rightLowPos.y) /2);
+		float distance = middle.dst(this.shipX, this.shipY); 
+		short genNum = (short) (this.laserNumPerUnit * distance);
+
+		float yDst = Math.abs(middle.y - shipY);
+		
+		for (int genCount = 0; genCount < genNum; genCount++) {
 			
 			if (this.lasers.size() >= this.maxLaserNum) {
 				return;
@@ -203,14 +227,14 @@ public class ALaserTest implements ApplicationListener {
 			lasers.add(laser);
 			
 		
-			laser.leftHighPos = this.calculatePos(true, true, genCount);
-			laser.rightHighPos = this.calculatePos(false, true, genCount);
-			laser.leftLowPos = this.calculatePos(true, false, genCount);
-			laser.rightLowPos = this.calculatePos(false, false, genCount);
+			laser.leftHighPos = this.calculatePos(true, true, genCount, genNum, middle);
+			laser.rightHighPos = this.calculatePos(false, true, genCount, genNum, middle);
+			laser.leftLowPos = this.calculatePos(true, false, genCount, genNum, middle);
+			laser.rightLowPos = this.calculatePos(false, false, genCount, genNum, middle);
 			if (arc < minArc || arc > (pi - minArc)) {
 				arc = minArc;
 			}
-			arc += arcStep;
+			arc += yDst * arcStep;
 			arc %= pi;
 			
 			if (lasers.size() > maxLaserNum - 20) {
@@ -226,25 +250,26 @@ public class ALaserTest implements ApplicationListener {
 			return;
 		}
 		lastGenLaser = new Laser();
-		lastGenLaser.leftLowPos = new Vector2(0, 0);
-		lastGenLaser.rightLowPos = new Vector2(0, 0);
+		lastGenLaser.leftLowPos = new Vector2(0, 0.1f);
+		lastGenLaser.rightLowPos = new Vector2(0, 0.1f);
 	}
 	
-	private Vector2 calculatePos(boolean left, boolean high, int genCount) {
+	private Vector2 calculatePos(boolean left, boolean high, int genCount, int genTotalNum, Vector2 middle) {
 		this.checkLastGenLaser();
 		if (high && left) {
-			return lastGenLaser.leftLowPos; //reuse
+			return new Vector2(lastGenLaser.leftLowPos); //reuse
 		}
 		if (high && !left) {
-			return lastGenLaser.rightLowPos; //reuse
+			return new Vector2(lastGenLaser.rightLowPos); //reuse
 		}
 		
-		float curY = shipY + (this.laserNumPerGen - genCount) / laserNumPerGen * (lastGenLaser.rightLowPos.y - shipY);
+		float curY = shipY + (genTotalNum - genCount) / genTotalNum * (middle.y - shipY);
+		float curX = shipX +  (genTotalNum - genCount) / genTotalNum * (middle.x - shipX);
 		if (left) {
-			return new Vector2( (float) (shipX - Math.sin(arc) * radius /2), curY);
+			return new Vector2( (float) (curX - Math.sin(arc) * radius /2), curY);
 		}
 		if (!left) {
-			return new Vector2( (float) (shipX + Math.sin(arc) * radius /2), curY);
+			return new Vector2( (float) (curX + Math.sin(arc) * radius /2), curY);
 		}
 		return null;
 	}
@@ -291,5 +316,61 @@ public class ALaserTest implements ApplicationListener {
 	{
 		// TODO Auto-generated method stub
 		
+	}
+
+	@Override
+	public boolean keyDown(int arg0)
+	{
+		// TODO Auto-generated method stub
+		return false;
+	}
+
+	@Override
+	public boolean keyTyped(char arg0)
+	{
+		// TODO Auto-generated method stub
+		return false;
+	}
+
+	@Override
+	public boolean keyUp(int arg0)
+	{
+		// TODO Auto-generated method stub
+		return false;
+	}
+
+	@Override
+	public boolean mouseMoved(int arg0, int arg1)
+	{
+		// TODO Auto-generated method stub
+		return false;
+	}
+
+	@Override
+	public boolean scrolled(int arg0)
+	{
+		// TODO Auto-generated method stub
+		return false;
+	}
+
+	@Override
+	public boolean touchDown(int arg0, int arg1, int arg2, int arg3)
+	{
+		// TODO Auto-generated method stub
+		return false;
+	}
+
+	@Override
+	public boolean touchDragged(int arg0, int arg1, int arg2)
+	{
+		this.shipX = (arg0 * 1f / Gdx.graphics.getWidth()) - 0.5f;
+		return false;
+	}
+
+	@Override
+	public boolean touchUp(int arg0, int arg1, int arg2, int arg3)
+	{
+		// TODO Auto-generated method stub
+		return false;
 	}
 }
